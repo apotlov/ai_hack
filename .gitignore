@@ -1,2 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-Полный план реализации MVP антифрод решения.md
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Models and data (large files)
+models/*.joblib
+models/*.pkl
+models/*.h5
+data/amplitude/*.parquet
+data/audiofiles/*.wav
+data/audiofiles/*.mp3
+data/*.csv
+
+# Output files
+output/*.csv
+output/*.txt
+output/*.html
+output/*.json
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Project specific
+.ropeproject/
