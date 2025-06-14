@@ -498,7 +498,32 @@ class RealFeaturesProcessor:
             target_col = self._find_target_column(target_data)
             merge_col = self._find_group_column(target_data)
 
+            logger.info(f"🔍 Целевая колонка: {target_col}")
+            logger.info(f"🔍 Колонка для слияния: {merge_col}")
+            logger.info(f"🔍 Доступные колонки в target_data: {list(target_data.columns)}")
+            logger.info(f"🔍 Доступные колонки в combined_features: {list(combined_features.columns)}")
+
+            if 'applicationid' in combined_features.columns:
+                logger.info(f"🔍 Уникальных applicationid в features: {combined_features['applicationid'].nunique()}")
+                logger.info(f"🔍 Примеры applicationid в features: {combined_features['applicationid'].head().tolist()}")
+
+            if merge_col and merge_col in target_data.columns:
+                logger.info(f"🔍 Уникальных {merge_col} в target_data: {target_data[merge_col].nunique()}")
+                logger.info(f"🔍 Примеры {merge_col} в target_data: {target_data[merge_col].head().tolist()}")
+
             if target_col and merge_col and merge_col in combined_features.columns:
+                # Проверяем пересечение ключей перед слиянием
+                features_keys = set(combined_features['applicationid'].astype(str))
+                target_keys = set(target_data[merge_col].astype(str))
+                intersection = features_keys.intersection(target_keys)
+
+                logger.info(f"🔍 Пересечение ключей: {len(intersection)} из {len(features_keys)} features и {len(target_keys)} target")
+
+                if len(intersection) == 0:
+                    logger.error("❌ Нет пересечения между ключами features и target данных!")
+                    logger.info(f"🔍 Первые 5 ключей features: {list(features_keys)[:5]}")
+                    logger.info(f"🔍 Первые 5 ключей target: {list(target_keys)[:5]}")
+
                 # Объединяем с целевыми данными по APPLICATIONID
                 final_data = pd.merge(
                     combined_features, target_data,
@@ -506,13 +531,24 @@ class RealFeaturesProcessor:
                     how='inner'
                 )
 
-                target_series = final_data[target_col]
+                logger.info(f"🔍 Размер после слияния: {final_data.shape}")
 
-                # Удаляем целевую колонку и дубликаты из признаков
-                cols_to_drop = [target_col, merge_col] + [col for col in final_data.columns if col.endswith('_y')]
-                final_data = final_data.drop(columns=cols_to_drop, errors='ignore')
+                if not final_data.empty:
+                    target_series = final_data[target_col]
 
-                combined_features = final_data
+                    # Удаляем целевую колонку и дубликаты из признаков
+                    cols_to_drop = [target_col, merge_col] + [col for col in final_data.columns if col.endswith('_y')]
+                    final_data = final_data.drop(columns=cols_to_drop, errors='ignore')
+
+                    combined_features = final_data
+                else:
+                    logger.error("❌ После слияния получен пустой датафрейм!")
+            else:
+                logger.error(f"❌ Не найдены колонки для слияния: target_col={target_col}, merge_col={merge_col}")
+                if merge_col and merge_col not in combined_features.columns:
+                    logger.error(f"❌ Колонка {merge_col} отсутствует в combined_features")
+        else:
+            logger.error("❌ Target data пуст!")
 
         # Финальная очистка
         combined_features = self._clean_features(combined_features)
