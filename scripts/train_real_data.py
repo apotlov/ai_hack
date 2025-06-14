@@ -424,35 +424,62 @@ def main():
         # КРИТИЧНО: Проверяем типы данных
         logger.info("🔍 Проверка типов данных...")
 
-        # Проверяем что все колонки числовые
-        non_numeric_cols = []
+        # Проверяем все типы данных
+        problematic_cols = []
         for col in X.columns:
-            if X[col].dtype == 'object':
-                non_numeric_cols.append(col)
-                logger.warning(f"⚠️  Найдена нечисловая колонка: {col} (тип: {X[col].dtype})")
+            col_dtype = str(X[col].dtype)
 
-        if non_numeric_cols:
-            logger.error(f"❌ Найдены нечисловые колонки: {non_numeric_cols}")
+            # Проверяем на проблемные типы
+            if any(dtype_name in col_dtype.lower() for dtype_name in ['object', 'datetime', 'timedelta', 'string']):
+                problematic_cols.append(col)
+                logger.warning(f"⚠️  Найдена проблемная колонка: {col} (тип: {col_dtype})")
+
+        if problematic_cols:
+            logger.error(f"❌ Найдены проблемные колонки: {problematic_cols}")
             logger.info("🔧 Попытка принудительного преобразования...")
 
-            for col in non_numeric_cols:
+            for col in problematic_cols:
+                col_dtype = str(X[col].dtype)
                 try:
-                    X[col] = pd.to_numeric(X[col], errors='coerce')
-                    X[col] = X[col].fillna(0)
-                    logger.info(f"✅ Преобразована колонка: {col}")
+                    if 'datetime' in col_dtype.lower():
+                        # Преобразуем datetime в timestamp
+                        X[col] = pd.to_datetime(X[col]).astype('int64') // 10**9
+                        logger.info(f"✅ Преобразована datetime колонка: {col}")
+                    elif 'timedelta' in col_dtype.lower():
+                        # Преобразуем timedelta в секунды
+                        X[col] = pd.to_timedelta(X[col]).dt.total_seconds()
+                        logger.info(f"✅ Преобразована timedelta колонка: {col}")
+                    else:
+                        # Пробуем числовое преобразование
+                        X[col] = pd.to_numeric(X[col], errors='coerce')
+                        X[col] = X[col].fillna(0)
+                        logger.info(f"✅ Преобразована колонка: {col}")
                 except Exception as e:
                     logger.error(f"❌ Не удалось преобразовать {col}: {e}")
                     X = X.drop(columns=[col])
                     logger.info(f"🗑️  Удалена проблемная колонка: {col}")
 
-        # Финальная проверка
-        remaining_object_cols = X.select_dtypes(include=['object']).columns
-        if len(remaining_object_cols) > 0:
-            logger.error(f"❌ Остались нечисловые колонки: {list(remaining_object_cols)}")
-            X = X.select_dtypes(exclude=['object'])
-            logger.info(f"🔧 Удалены все нечисловые колонки, осталось: {X.shape}")
+        # Финальная проверка - оставляем только числовые типы
+        final_numeric_types = ['int', 'float', 'number']
+        valid_cols = []
+
+        for col in X.columns:
+            col_dtype = str(X[col].dtype).lower()
+            if any(num_type in col_dtype for num_type in final_numeric_types):
+                valid_cols.append(col)
+            else:
+                logger.warning(f"🗑️  Удаляем колонку с неподходящим типом: {col} ({X[col].dtype})")
+
+        if len(valid_cols) != len(X.columns):
+            X = X[valid_cols]
+            logger.info(f"🔧 Оставлены только числовые колонки: {X.shape}")
+
+        # Финальная проверка на NaN и Inf
+        X = X.replace([np.inf, -np.inf], 0)
+        X = X.fillna(0)
 
         logger.info(f"✅ Финальные данные: {X.shape}, все колонки числовые")
+        logger.info(f"📊 Типы данных: {X.dtypes.value_counts().to_dict()}")
         main_pbar.update(1)
 
         if y.nunique() < 2:

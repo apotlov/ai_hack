@@ -237,26 +237,46 @@ class RealFeaturesProcessor:
         }
 
         # Агрегируем числовые признаки
-        numeric_cols = group_data.select_dtypes(include=[np.number]).columns
-
-        for col in numeric_cols:
+        # Обработка всех колонок с преобразованием дат
+        for col in group_data.columns:
             if group_data[col].notna().sum() > 0:
-                values = group_data[col].dropna()
+                col_dtype = str(group_data[col].dtype)
 
-                features.update({
-                    f'app_{col}_mean': values.mean(),
-                    f'app_{col}_sum': values.sum(),
-                    f'app_{col}_max': values.max(),
-                    f'app_{col}_min': values.min()
-                })
+                # Обработка datetime колонок
+                if 'datetime' in col_dtype.lower() or 'date' in col.lower():
+                    try:
+                        date_values = pd.to_datetime(group_data[col], errors='coerce').dropna()
+                        if len(date_values) > 0:
+                            # Преобразуем в timestamp
+                            timestamps = date_values.astype('int64') // 10**9
+                            features.update({
+                                f'app_{col}_timestamp_mean': timestamps.mean(),
+                                f'app_{col}_timestamp_min': timestamps.min(),
+                                f'app_{col}_timestamp_max': timestamps.max(),
+                            })
 
-        # Категориальные признаки
-        categorical_cols = group_data.select_dtypes(include=['object']).columns
+                            # Дополнительные временные признаки
+                            features[f'app_{col}_hour_mean'] = date_values.dt.hour.mean()
+                            features[f'app_{col}_day_of_week_mean'] = date_values.dt.dayofweek.mean()
+                            features[f'app_{col}_month_mean'] = date_values.dt.month.mean()
+                    except Exception as e:
+                        logger.warning(f"⚠️  Ошибка обработки даты {col}: {e}")
+                        continue
 
-        for col in categorical_cols:
-            if group_data[col].notna().sum() > 0:
-                unique_values = group_data[col].nunique()
-                features[f'app_{col}_unique_count'] = unique_values
+                # Числовые колонки
+                elif group_data[col].dtype in ['int64', 'float64', 'int32', 'float32']:
+                    values = group_data[col].dropna()
+                    features.update({
+                        f'app_{col}_mean': values.mean(),
+                        f'app_{col}_std': values.std(),
+                        f'app_{col}_max': values.max(),
+                        f'app_{col}_min': values.min()
+                    })
+
+                # Категориальные колонки
+                elif group_data[col].dtype == 'object':
+                    unique_values = group_data[col].nunique()
+                    features[f'app_{col}_unique_count'] = unique_values
 
         return features
 
@@ -590,18 +610,35 @@ class RealFeaturesProcessor:
         non_numeric_cols = []
 
         for col in features_df.columns:
-            # Проверяем можно ли преобразовать в числа
-            try:
-                # Пробуем преобразовать несколько значений
-                sample_values = features_df[col].dropna().head(100)
-                if len(sample_values) > 0:
-                    pd.to_numeric(sample_values, errors='raise')
-                    numeric_cols.append(col)
-                else:
-                    # Пустая колонка - удаляем
+            # Проверяем тип данных
+            col_dtype = str(features_df[col].dtype)
+
+            # Проверяем на datetime
+            if 'datetime' in col_dtype.lower() or 'timedelta' in col_dtype.lower():
+                # Преобразуем datetime в числовые признаки
+                try:
+                    if 'datetime' in col_dtype.lower():
+                        # Конвертируем datetime в timestamp (секунды с эпохи)
+                        features_df[col + '_timestamp'] = pd.to_datetime(features_df[col]).astype('int64') // 10**9
+                        numeric_cols.append(col + '_timestamp')
+                        logger.info(f"🔄 Преобразована datetime колонка: {col} -> {col}_timestamp")
+                    non_numeric_cols.append(col)  # Удаляем оригинальную datetime колонку
+                except Exception as e:
+                    logger.warning(f"⚠️  Ошибка преобразования datetime {col}: {e}")
                     non_numeric_cols.append(col)
-            except (ValueError, TypeError):
-                non_numeric_cols.append(col)
+            else:
+                # Проверяем можно ли преобразовать в числа
+                try:
+                    # Пробуем преобразовать несколько значений
+                    sample_values = features_df[col].dropna().head(100)
+                    if len(sample_values) > 0:
+                        pd.to_numeric(sample_values, errors='raise')
+                        numeric_cols.append(col)
+                    else:
+                        # Пустая колонка - удаляем
+                        non_numeric_cols.append(col)
+                except (ValueError, TypeError):
+                    non_numeric_cols.append(col)
 
         logger.info(f"📊 Числовых колонок: {len(numeric_cols)}")
         logger.info(f"🗑️  Нечисловых колонок для удаления: {len(non_numeric_cols)}")
