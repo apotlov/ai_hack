@@ -512,9 +512,27 @@ class RealFeaturesProcessor:
                 logger.info(f"🔍 Примеры {merge_col} в target_data: {target_data[merge_col].head().tolist()}")
 
             if target_col and merge_col and merge_col in combined_features.columns:
+                # Нормализуем ключи - убираем escape символы и приводим к единому регистру
+                def normalize_key(key):
+                    if pd.isna(key):
+                        return ""
+                    key_str = str(key).strip()
+                    # Обрабатываем escape символы более безопасно
+                    try:
+                        key_str = key_str.encode('latin1').decode('unicode_escape')
+                    except:
+                        # Если не получается декодировать, оставляем как есть
+                        pass
+                    return key_str.upper()
+
+                # Нормализуем ключи в обеих таблицах
+                combined_features['applicationid_normalized'] = combined_features['applicationid'].apply(normalize_key)
+                target_data_normalized = target_data.copy()
+                target_data_normalized[merge_col + '_normalized'] = target_data_normalized[merge_col].apply(normalize_key)
+
                 # Проверяем пересечение ключей перед слиянием
-                features_keys = set(combined_features['applicationid'].astype(str))
-                target_keys = set(target_data[merge_col].astype(str))
+                features_keys = set(combined_features['applicationid_normalized'])
+                target_keys = set(target_data_normalized[merge_col + '_normalized'])
                 intersection = features_keys.intersection(target_keys)
 
                 logger.info(f"🔍 Пересечение ключей: {len(intersection)} из {len(features_keys)} features и {len(target_keys)} target")
@@ -524,12 +542,15 @@ class RealFeaturesProcessor:
                     logger.info(f"🔍 Первые 5 ключей features: {list(features_keys)[:5]}")
                     logger.info(f"🔍 Первые 5 ключей target: {list(target_keys)[:5]}")
 
-                # Объединяем с целевыми данными по APPLICATIONID
+                # Объединяем с целевыми данными по нормализованным ключам
                 final_data = pd.merge(
-                    combined_features, target_data,
-                    left_on='applicationid', right_on=merge_col,
+                    combined_features, target_data_normalized,
+                    left_on='applicationid_normalized', right_on=merge_col + '_normalized',
                     how='inner'
                 )
+
+                # Удаляем вспомогательные колонки
+                final_data = final_data.drop(columns=['applicationid_normalized', merge_col + '_normalized'], errors='ignore')
 
                 logger.info(f"🔍 Размер после слияния: {final_data.shape}")
 
