@@ -166,10 +166,27 @@ class RealDataLoader:
         """
         logger.info("📋 Загрузка сводных данных...")
 
-        # Ищем сводные файлы
+        # Ищем сводные файлы в разных местах в зависимости от структуры
         svod_files = []
+
+        # Проверяем структуру data_train (svod.csv в корне)
+        if self.data_dir.name == "data_train":
+            svod_root = self.data_dir / "svod.csv"
+            if svod_root.exists():
+                svod_files.append(svod_root)
+
+        # Проверяем структуру data (svod.csv в amplitude)
+        svod_amplitude = self.amplitude_dir / "svod.csv"
+        if svod_amplitude.exists():
+            svod_files.append(svod_amplitude)
+
+        # Дополнительный поиск по паттернам
         for pattern in ["svod.csv", "свод.csv", "*свод*.csv"]:
-            svod_files.extend(list(self.svod_dir.glob(pattern)))
+            svod_files.extend(list(self.data_dir.glob(pattern)))
+            svod_files.extend(list(self.amplitude_dir.glob(pattern)))
+
+        # Удаляем дубликаты
+        svod_files = list(set(svod_files))
 
         if not svod_files:
             logger.warning("⚠️  Сводные файлы не найдены")

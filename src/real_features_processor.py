@@ -682,42 +682,41 @@ class RealFeaturesProcessor:
         self.data_loader = RealDataLoader(data_dir)
 
         try:
-            # Загружаем данные (без target_data)
-            amplitude_data = self.data_loader.load_amplitude_chunks()
+            # ИСПРАВЛЕНИЕ: Используем только app_data как в рабочем скрипте обучения
+            logger.info("🎯 УПРОЩЕННАЯ СТРАТЕГИЯ: Используем только app_data для предсказаний")
+            logger.info("📊 Причина: Совместимость с обученной моделью")
+
+            # Загружаем только app_data
             app_data = self.data_loader.load_app_data()
-            audio_metadata = self.data_loader.get_audio_files_metadata()
 
-            # Извлекаем признаки
-            amplitude_features = self.extract_amplitude_features(amplitude_data)
-            app_features = self.extract_app_features(app_data)
-            audio_features = self.extract_audio_features(audio_metadata)
-            temporal_features = self.extract_temporal_features(amplitude_data)
-
-            # Объединяем признаки
-            all_features = [amplitude_features, app_features, audio_features, temporal_features]
-            non_empty_features = [df for df in all_features if not df.empty]
-
-            if not non_empty_features:
+            if app_data.empty:
+                logger.error("❌ App данные отсутствуют")
                 return pd.DataFrame()
 
-            combined_features = non_empty_features[0]
+            # Извлекаем признаки из app_data (как в обучении)
+            logger.info("🔧 Извлечение признаков из app_data...")
+            with tqdm(total=2, desc="🔧 Обработка app данных", unit="этап") as pbar:
+                app_features = self.extract_app_features(app_data)
+                pbar.update(1)
 
-            for features_df in non_empty_features[1:]:
-                if 'applicationid' in features_df.columns and 'applicationid' in combined_features.columns:
-                    combined_features = pd.merge(
-                        combined_features, features_df,
-                        on='applicationid',
-                        how='outer',
-                        suffixes=('', '_dup')
-                    )
+                if app_features.empty:
+                    logger.error("❌ Не удалось извлечь app признаки")
+                    return pd.DataFrame()
 
-            # Очищаем признаки
-            combined_features = self._clean_features(combined_features)
+                # Очищаем признаки (удаляем нечисловые колонки)
+                combined_features = self._clean_features(app_features)
+                pbar.update(1)
 
             logger.info(f"✅ Признаки для предсказания готовы: {combined_features.shape}")
 
             return combined_features
 
+        except Exception as e:
+            logger.error(f"❌ Ошибка при создании признаков для предсказания: {e}")
+            import traceback
+            traceback.print_exc()
+            return pd.DataFrame()
+
         finally:
-            # Восстанавливаем исходную директорию
+            # Восстанавливаем оригинальную директорию
             self.data_loader = RealDataLoader(original_data_dir)
