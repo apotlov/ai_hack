@@ -511,13 +511,30 @@ class RealFeaturesProcessor:
                         if not final_data.empty:
                             target_series = final_data[target_col].copy()
 
-                            # Удаляем служебные колонки
-                            cols_to_drop = [target_col, merge_col] + [col for col in final_data.columns if col.endswith('_y')]
+                            # Удаляем служебные колонки И идентификаторы
+                            cols_to_drop = [
+                                target_col, merge_col, 'applicationid',  # Основные ID колонки
+                                'APPLICATIONID', 'application_id', 'ApplicationID',  # Вариации названий
+                                'user_id', 'session_id', 'device_id',  # Другие ID
+                            ] + [col for col in final_data.columns if col.endswith('_y')]
+
+                            # Также удаляем все строковые колонки которые не являются числовыми
+                            string_cols = []
+                            for col in final_data.columns:
+                                if col not in cols_to_drop:
+                                    try:
+                                        pd.to_numeric(final_data[col], errors='raise')
+                                    except (ValueError, TypeError):
+                                        string_cols.append(col)
+                                        logger.warning(f"⚠️  Удаляем нечисловую колонку: {col}")
+
+                            cols_to_drop.extend(string_cols)
                             combined_features = final_data.drop(columns=cols_to_drop, errors='ignore')
 
                             logger.info(f"🎯 Итоговые признаки: {combined_features.shape}")
                             logger.info(f"🎯 Целевые метки: {len(target_series)}")
                             logger.info(f"📊 Распределение классов: {target_series.value_counts().to_dict()}")
+                            logger.info(f"🧹 Удалено колонок: {len(cols_to_drop)}")
                         else:
                             logger.error("❌ После merge получен пустой датафрейм!")
                     else:
@@ -563,31 +580,49 @@ class RealFeaturesProcessor:
         if features_df.empty:
             return features_df
 
+        logger.info(f"🧹 Начальная очистка: {features_df.shape}")
+
         # Удаляем дублирующиеся колонки
         features_df = features_df.loc[:, ~features_df.columns.duplicated()]
 
-        # Заполняем пропуски
-        numeric_cols = features_df.select_dtypes(include=[np.number]).columns
-        features_df[numeric_cols] = features_df[numeric_cols].fillna(0)
+        # КРИТИЧНО: Удаляем ВСЕ нечисловые колонки для ML
+        numeric_cols = []
+        non_numeric_cols = []
 
-        categorical_cols = features_df.select_dtypes(include=['object']).columns
-        features_df[categorical_cols] = features_df[categorical_cols].fillna('unknown')
+        for col in features_df.columns:
+            # Проверяем можно ли преобразовать в числа
+            try:
+                # Пробуем преобразовать несколько значений
+                sample_values = features_df[col].dropna().head(100)
+                if len(sample_values) > 0:
+                    pd.to_numeric(sample_values, errors='raise')
+                    numeric_cols.append(col)
+                else:
+                    # Пустая колонка - удаляем
+                    non_numeric_cols.append(col)
+            except (ValueError, TypeError):
+                non_numeric_cols.append(col)
+
+        logger.info(f"📊 Числовых колонок: {len(numeric_cols)}")
+        logger.info(f"🗑️  Нечисловых колонок для удаления: {len(non_numeric_cols)}")
+
+        if non_numeric_cols:
+            logger.info(f"🗑️  Удаляемые колонки: {non_numeric_cols[:10]}{'...' if len(non_numeric_cols) > 10 else ''}")
+
+        # Оставляем только числовые колонки
+        features_df = features_df[numeric_cols]
+
+        # Заполняем пропуски в числовых данных
+        features_df = features_df.fillna(0)
+
+        # Заменяем бесконечные значения
+        features_df = features_df.replace([np.inf, -np.inf], 0)
 
         # Удаляем константные колонки
         constant_cols = features_df.columns[features_df.nunique() <= 1]
         if len(constant_cols) > 0:
             logger.info(f"🗑️  Удаление константных колонок: {len(constant_cols)}")
             features_df = features_df.drop(columns=constant_cols)
-
-        # Удаляем служебные колонки
-        service_cols = [col for col in features_df.columns if
-                       col.startswith('applicationid') or col == 'applicationid']
-
-        # Оставляем только одну applicationid колонку, остальные удаляем
-        if 'applicationid' in features_df.columns:
-            other_app_cols = [col for col in service_cols if col != 'applicationid']
-            if other_app_cols:
-                features_df = features_df.drop(columns=other_app_cols)
 
         logger.info(f"🧹 Признаки очищены: {features_df.shape}")
 

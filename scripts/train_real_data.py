@@ -411,12 +411,49 @@ def main():
         features_processor = RealFeaturesProcessor(str(data_dir))
 
         # Подготавливаем данные
+        main_pbar.set_description("🔧 Подготовка данных")
         X, y, quality_metrics = prepare_training_data(features_processor)
+        main_pbar.update(1)
 
         # Проверяем минимальные требования
+        main_pbar.set_description("✅ Проверка данных")
         if len(X) < 100:
             logger.error("❌ Недостаточно данных для обучения (минимум 100 образцов)")
             return False
+
+        # КРИТИЧНО: Проверяем типы данных
+        logger.info("🔍 Проверка типов данных...")
+
+        # Проверяем что все колонки числовые
+        non_numeric_cols = []
+        for col in X.columns:
+            if X[col].dtype == 'object':
+                non_numeric_cols.append(col)
+                logger.warning(f"⚠️  Найдена нечисловая колонка: {col} (тип: {X[col].dtype})")
+
+        if non_numeric_cols:
+            logger.error(f"❌ Найдены нечисловые колонки: {non_numeric_cols}")
+            logger.info("🔧 Попытка принудительного преобразования...")
+
+            for col in non_numeric_cols:
+                try:
+                    X[col] = pd.to_numeric(X[col], errors='coerce')
+                    X[col] = X[col].fillna(0)
+                    logger.info(f"✅ Преобразована колонка: {col}")
+                except Exception as e:
+                    logger.error(f"❌ Не удалось преобразовать {col}: {e}")
+                    X = X.drop(columns=[col])
+                    logger.info(f"🗑️  Удалена проблемная колонка: {col}")
+
+        # Финальная проверка
+        remaining_object_cols = X.select_dtypes(include=['object']).columns
+        if len(remaining_object_cols) > 0:
+            logger.error(f"❌ Остались нечисловые колонки: {list(remaining_object_cols)}")
+            X = X.select_dtypes(exclude=['object'])
+            logger.info(f"🔧 Удалены все нечисловые колонки, осталось: {X.shape}")
+
+        logger.info(f"✅ Финальные данные: {X.shape}, все колонки числовые")
+        main_pbar.update(1)
 
         if y.nunique() < 2:
             logger.error("❌ Нет разнообразия в целевых метках")
