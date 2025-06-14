@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 import logging
 from datetime import datetime, timedelta
 import re
+from tqdm import tqdm
 
 from real_data_loader import RealDataLoader
 from audio_processor import AudioProcessor
@@ -175,15 +176,20 @@ class RealFeaturesProcessor:
 
         if not group_col:
             # Если нет группировочной колонки, обрабатываем каждую строку отдельно
-            for idx, row in app_data.iterrows():
-                features = self._extract_single_app_features(f"app_{idx}", row)
-                features_list.append(features)
+            with tqdm(total=len(app_data), desc="📱 Обработка заявок", unit="заявка") as pbar:
+                for idx, row in app_data.iterrows():
+                    features = self._extract_single_app_features(f"app_{idx}", row)
+                    features_list.append(features)
+                    pbar.update(1)
         else:
             # Группируем по идентификатору
-            for group_id, group_data in app_data.groupby(group_col):
-                # Для заявок обычно одна запись на группу, но может быть несколько
-                features = self._extract_group_app_features(group_id, group_data)
-                features_list.append(features)
+            groups = list(app_data.groupby(group_col))
+            with tqdm(total=len(groups), desc="📱 Обработка групп заявок", unit="группа") as pbar:
+                for group_id, group_data in groups:
+                    # Для заявок обычно одна запись на группу, но может быть несколько
+                    features = self._extract_group_app_features(group_id, group_data)
+                    features_list.append(features)
+                    pbar.update(1)
 
         if not features_list:
             return pd.DataFrame()
@@ -454,122 +460,76 @@ class RealFeaturesProcessor:
         logger.info("🔗 Объединение всех признаков...")
 
         # Загружаем базовые данные
-        amplitude_data = self.data_loader.load_amplitude_chunks()
         app_data = self.data_loader.load_app_data()
         target_data = self.data_loader.load_target_data()
-        audio_metadata = self.data_loader.get_audio_files_metadata()
 
-        # Извлекаем признаки
-        amplitude_features = self.extract_amplitude_features(amplitude_data)
-        app_features = self.extract_app_features(app_data)
-        audio_features = self.extract_audio_features(audio_metadata)
-        temporal_features = self.extract_temporal_features(amplitude_data)
+        logger.info("🎯 УПРОЩЕННАЯ СТРАТЕГИЯ: Используем только app_data + target_data")
+        logger.info("📊 Причина: Разные типы ID в amplitude vs target данных")
 
-        # Объединяем все признаки
-        all_features = [amplitude_features, app_features, audio_features, temporal_features]
-
-        # Фильтруем пустые датафреймы
-        non_empty_features = [df for df in all_features if not df.empty]
-
-        if not non_empty_features:
-            logger.error("❌ Не удалось извлечь признаки ни из одного источника")
-            return pd.DataFrame(), pd.Series()
-
-        # Объединяем по applicationid
-        combined_features = non_empty_features[0]
-
-        for features_df in non_empty_features[1:]:
-            if 'applicationid' in features_df.columns and 'applicationid' in combined_features.columns:
-                combined_features = pd.merge(
-                    combined_features, features_df,
-                    on='applicationid',
-                    how='outer',
-                    suffixes=('', '_dup')
-                )
-
-                # Удаляем дублирующиеся колонки
-                dup_cols = [col for col in combined_features.columns if col.endswith('_dup')]
-                combined_features = combined_features.drop(columns=dup_cols)
-
-        # Объединяем с целевыми метками
         target_series = pd.Series(dtype=int)
+        combined_features = pd.DataFrame()
 
-        if not target_data.empty:
-            target_col = self._find_target_column(target_data)
-            merge_col = self._find_group_column(target_data)
+        if not target_data.empty and not app_data.empty:
+            # Извлекаем признаки из app_data
+            logger.info("🔧 Извлечение признаков из app_data...")
+            with tqdm(total=3, desc="🔧 Обработка app данных", unit="этап") as pbar:
+                app_features = self.extract_app_features(app_data)
+                pbar.update(1)
 
-            logger.info(f"🔍 Целевая колонка: {target_col}")
-            logger.info(f"🔍 Колонка для слияния: {merge_col}")
-            logger.info(f"🔍 Доступные колонки в target_data: {list(target_data.columns)}")
-            logger.info(f"🔍 Доступные колонки в combined_features: {list(combined_features.columns)}")
+                if app_features.empty:
+                    logger.error("❌ Не удалось извлечь app признаки")
+                    return pd.DataFrame(), pd.Series()
 
-            if 'applicationid' in combined_features.columns:
-                logger.info(f"🔍 Уникальных applicationid в features: {combined_features['applicationid'].nunique()}")
-                logger.info(f"🔍 Примеры applicationid в features: {combined_features['applicationid'].head().tolist()}")
+                target_col = self._find_target_column(target_data)
+                merge_col = self._find_group_column(target_data)
+                pbar.update(1)
 
-            if merge_col and merge_col in target_data.columns:
-                logger.info(f"🔍 Уникальных {merge_col} в target_data: {target_data[merge_col].nunique()}")
-                logger.info(f"🔍 Примеры {merge_col} в target_data: {target_data[merge_col].head().tolist()}")
+                logger.info(f"🔍 Целевая колонка: {target_col}")
+                logger.info(f"🔍 Колонка для слияния: {merge_col}")
+                logger.info(f"🔍 App признаки: {app_features.shape}")
+                logger.info(f"🔍 Target данные: {target_data.shape}")
 
-            if target_col and merge_col and merge_col in combined_features.columns:
-                # Нормализуем ключи - убираем escape символы и приводим к единому регистру
-                def normalize_key(key):
-                    if pd.isna(key):
-                        return ""
-                    key_str = str(key).strip()
-                    # Обрабатываем escape символы более безопасно
-                    try:
-                        key_str = key_str.encode('latin1').decode('unicode_escape')
-                    except:
-                        # Если не получается декодировать, оставляем как есть
-                        pass
-                    return key_str.upper()
+                if target_col and merge_col:
+                    # Проверяем пересечение ключей
+                    app_ids = set(app_features['applicationid'].dropna().astype(str))
+                    target_ids = set(target_data[merge_col].dropna().astype(str))
+                    intersection = app_ids.intersection(target_ids)
 
-                # Нормализуем ключи в обеих таблицах
-                combined_features['applicationid_normalized'] = combined_features['applicationid'].apply(normalize_key)
-                target_data_normalized = target_data.copy()
-                target_data_normalized[merge_col + '_normalized'] = target_data_normalized[merge_col].apply(normalize_key)
+                    logger.info(f"🔍 Пересечение ключей: {len(intersection)} из {len(app_ids)} app и {len(target_ids)} target")
 
-                # Проверяем пересечение ключей перед слиянием
-                features_keys = set(combined_features['applicationid_normalized'])
-                target_keys = set(target_data_normalized[merge_col + '_normalized'])
-                intersection = features_keys.intersection(target_keys)
+                    if len(intersection) > 0:
+                        # Прямое слияние app_data с target_data
+                        logger.info("🔗 Выполнение merge app_features + target_data...")
+                        final_data = pd.merge(
+                            app_features, target_data,
+                            left_on='applicationid', right_on=merge_col,
+                            how='inner'
+                        )
 
-                logger.info(f"🔍 Пересечение ключей: {len(intersection)} из {len(features_keys)} features и {len(target_keys)} target")
+                        logger.info(f"✅ Размер после слияния: {final_data.shape}")
 
-                if len(intersection) == 0:
-                    logger.error("❌ Нет пересечения между ключами features и target данных!")
-                    logger.info(f"🔍 Первые 5 ключей features: {list(features_keys)[:5]}")
-                    logger.info(f"🔍 Первые 5 ключей target: {list(target_keys)[:5]}")
+                        if not final_data.empty:
+                            target_series = final_data[target_col].copy()
 
-                # Объединяем с целевыми данными по нормализованным ключам
-                final_data = pd.merge(
-                    combined_features, target_data_normalized,
-                    left_on='applicationid_normalized', right_on=merge_col + '_normalized',
-                    how='inner'
-                )
+                            # Удаляем служебные колонки
+                            cols_to_drop = [target_col, merge_col] + [col for col in final_data.columns if col.endswith('_y')]
+                            combined_features = final_data.drop(columns=cols_to_drop, errors='ignore')
 
-                # Удаляем вспомогательные колонки
-                final_data = final_data.drop(columns=['applicationid_normalized', merge_col + '_normalized'], errors='ignore')
-
-                logger.info(f"🔍 Размер после слияния: {final_data.shape}")
-
-                if not final_data.empty:
-                    target_series = final_data[target_col]
-
-                    # Удаляем целевую колонку и дубликаты из признаков
-                    cols_to_drop = [target_col, merge_col] + [col for col in final_data.columns if col.endswith('_y')]
-                    final_data = final_data.drop(columns=cols_to_drop, errors='ignore')
-
-                    combined_features = final_data
+                            logger.info(f"🎯 Итоговые признаки: {combined_features.shape}")
+                            logger.info(f"🎯 Целевые метки: {len(target_series)}")
+                            logger.info(f"📊 Распределение классов: {target_series.value_counts().to_dict()}")
+                        else:
+                            logger.error("❌ После merge получен пустой датафрейм!")
+                    else:
+                        logger.error("❌ Нет пересечения между app и target ключами!")
+                        logger.info(f"🔍 Примеры app ID: {list(app_ids)[:5]}")
+                        logger.info(f"🔍 Примеры target ID: {list(target_ids)[:5]}")
                 else:
-                    logger.error("❌ После слияния получен пустой датафрейм!")
-            else:
-                logger.error(f"❌ Не найдены колонки для слияния: target_col={target_col}, merge_col={merge_col}")
-                if merge_col and merge_col not in combined_features.columns:
-                    logger.error(f"❌ Колонка {merge_col} отсутствует в combined_features")
+                    logger.error(f"❌ Не найдены обязательные колонки: target_col={target_col}, merge_col={merge_col}")
+
+                pbar.update(1)
         else:
-            logger.error("❌ Target data пуст!")
+            logger.error("❌ Отсутствуют базовые данные (app_data или target_data)")
 
         # Финальная очистка
         combined_features = self._clean_features(combined_features)

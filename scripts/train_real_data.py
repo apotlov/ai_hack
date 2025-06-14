@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 import logging
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 from typing import Dict, Any
 
 from real_features_processor import RealFeaturesProcessor
@@ -153,27 +154,36 @@ def prepare_training_data(features_processor: RealFeaturesProcessor) -> tuple:
     """
     logger.info("🔧 Подготовка данных для обучения...")
 
-    # Извлекаем и объединяем все признаки
-    X, y = features_processor.combine_all_features()
+    with tqdm(total=4, desc="🔧 Подготовка данных", unit="шаг", leave=False) as pbar:
+        # Извлекаем и объединяем все признаки
+        pbar.set_description("🔗 Объединение признаков")
+        X, y = features_processor.combine_all_features()
+        pbar.update(1)
 
-    if X.empty or y.empty:
-        raise ValueError("❌ Не удалось подготовить данные для обучения")
+        if X.empty or y.empty:
+            raise ValueError("❌ Не удалось подготовить данные для обучения")
 
-    # Удаляем session_id из признаков если он есть
-    if 'session_id' in X.columns:
-        X = X.drop('session_id', axis=1)
+        # Удаляем session_id из признаков если он есть
+        pbar.set_description("🧹 Очистка данных")
+        if 'session_id' in X.columns:
+            X = X.drop('session_id', axis=1)
+        pbar.update(1)
 
-    # Анализируем качество данных
-    quality_metrics = analyze_data_quality(X, y)
+        # Анализируем качество данных
+        pbar.set_description("📊 Анализ качества")
+        quality_metrics = analyze_data_quality(X, y)
+        pbar.update(1)
 
-    # Предупреждения по качеству
-    if quality_metrics['missing_values_ratio'] > 0.2:
-        logger.warning("⚠️  Высокая доля пропущенных значений")
+        # Предупреждения по качеству
+        pbar.set_description("⚠️  Проверка качества")
+        if quality_metrics['missing_values_ratio'] > 0.2:
+            logger.warning("⚠️  Высокая доля пропущенных значений")
 
-    if quality_metrics['fraud_rate'] < 0.05:
-        logger.warning("⚠️  Очень низкая доля мошенничества")
-    elif quality_metrics['fraud_rate'] > 0.5:
-        logger.warning("⚠️  Подозрительно высокая доля мошенничества")
+        if quality_metrics['fraud_rate'] < 0.05:
+            logger.warning("⚠️  Очень низкая доля мошенничества")
+        elif quality_metrics['fraud_rate'] > 0.5:
+            logger.warning("⚠️  Подозрительно высокая доля мошенничества")
+        pbar.update(1)
 
     return X, y, quality_metrics
 
@@ -371,23 +381,30 @@ def main():
     logger.info("🚀 Запуск обучения антифрод модели на реальных данных")
 
     try:
-        # Настройки путей
-        data_dir = Path(__file__).parent.parent / "data"
-        models_dir = Path(__file__).parent.parent / "models"
-        output_dir = Path(__file__).parent.parent / "output"
+        # Общий прогресс для всего процесса
+        with tqdm(total=7, desc="🚀 Обучение антифрод модели", unit="этап", position=0) as main_pbar:
 
-        # Создаем директории
-        models_dir.mkdir(exist_ok=True)
-        output_dir.mkdir(exist_ok=True)
+            # Настройки путей
+            main_pbar.set_description("📂 Настройка путей")
+            data_dir = Path(__file__).parent.parent / "data"
+            models_dir = Path(__file__).parent.parent / "models"
+            output_dir = Path(__file__).parent.parent / "output"
 
-        logger.info(f"📂 Директория данных: {data_dir}")
-        logger.info(f"🤖 Директория моделей: {models_dir}")
-        logger.info(f"📊 Выходная директория: {output_dir}")
+            # Создаем директории
+            models_dir.mkdir(exist_ok=True)
+            output_dir.mkdir(exist_ok=True)
 
-        # Проверяем структуру данных
-        if not validate_data_structure(data_dir):
-            logger.error("❌ Проверка структуры данных не пройдена")
-            return False
+            logger.info(f"📂 Директория данных: {data_dir}")
+            logger.info(f"🤖 Директория моделей: {models_dir}")
+            logger.info(f"📊 Выходная директория: {output_dir}")
+            main_pbar.update(1)
+
+            # Проверяем структуру данных
+            main_pbar.set_description("🔍 Проверка данных")
+            if not validate_data_structure(data_dir):
+                logger.error("❌ Проверка структуры данных не пройдена")
+                return False
+            main_pbar.update(1)
 
         # Инициализируем процессор признаков
         logger.info("🔧 Инициализация процессора признаков...")
